@@ -1,11 +1,11 @@
 {
-  "name": "parse-server",
-  "version": "2.3.8",
-  "description": "An express module providing a Parse-compatible API server",
+  "name": "parse-server-text",
+  "version": "2.3.17",
+  "description": "An express module providing a Parse-compatible API server with text query capabilities",
   "main": "lib/index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ParsePlatform/parse-server"
+    "url": "https://github.com/seriph/parse-server"
   },
   "files": [
     "bin/",
@@ -75,7 +75,7 @@
     "coverage": "cross-env COVERAGE_OPTION='./node_modules/.bin/nyc' npm test",
     "coverage:win": "cross-env MONGODB_VERSION=${MONGODB_VERSION:=3.2.6} MONGODB_STORAGE_ENGINE=mmapv1 NODE_ENV=test TESTING=1 node ./node_modules/.bin/nyc ./node_modules/jasmine/bin/jasmine.js",
     "start": "node ./bin/parse-server",
-    "prepublish": "npm run build"
+    "prepare": "npm run build"
   },
   "engines": {
     "node": ">=4.6"

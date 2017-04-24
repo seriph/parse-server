@@ -576,6 +576,22 @@ function transformConstraint(constraint, inArray) {
       answer[key] = constraint[key];
       break;
 
+    case '$search':
+      answer[key] = constraint[key];
+      break;
+    case '$language':
+      answer[key] = constraint[key];
+      break;
+    case '$caseSensitive':
+      answer[key] = constraint[key];
+      break;
+    case '$diacriticSensitive':
+      answer[key] = constraint[key];
+      break;
+    case '$meta':
+      answer[key] = constraint[key];
+      break;
+
     case '$nearSphere':
       var point = constraint[key];
       answer[key] = [point.longitude, point.latitude];
