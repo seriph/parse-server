@@ -5,26 +5,72 @@ var Config = require('../src/Config');
 var Parse = require('parse/node').Parse;
 var rest = require('../src/rest');
 var request = require('request');
+var rp = require('request-promise');
 
-var config = new Config('test');
-const database = config.database;
+let config;
+let database;
 
 describe('rest create', () => {
 
   beforeEach(() => {
     config = new Config('test');
+    database = config.database;
   });
 
   it('handles _id', done => {
     rest.create(config, auth.nobody(config), 'Foo', {})
-    .then(() => database.adapter.find('Foo', { fields: {} }, {}, {}))
-    .then(results => {
-      expect(results.length).toEqual(1);
-      var obj = results[0];
-      expect(typeof obj.objectId).toEqual('string');
-      expect(obj._id).toBeUndefined();
-      done();
-    });
+      .then(() => database.adapter.find('Foo', { fields: {} }, {}, {}))
+      .then(results => {
+        expect(results.length).toEqual(1);
+        var obj = results[0];
+        expect(typeof obj.objectId).toEqual('string');
+        expect(obj.objectId.length).toEqual(10);
+        expect(obj._id).toBeUndefined();
+        done();
+      });
+  });
+
+  it('can use custom _id size', done => {
+    config.objectIdSize = 20;
+    rest.create(config, auth.nobody(config), 'Foo', {})
+      .then(() => database.adapter.find('Foo', { fields: {} }, {}, {}))
+      .then((results) => {
+        expect(results.length).toEqual(1);
+        var obj = results[0];
+        expect(typeof obj.objectId).toEqual('string');
+        expect(obj.objectId.length).toEqual(20);
+        done();
+      });
+  });
+
+  it('is backwards compatible when _id size changes', done => {
+    rest.create(config, auth.nobody(config), 'Foo', {size: 10})
+      .then(() => {
+        config.objectIdSize = 20;
+        return rest.find(config, auth.nobody(config), 'Foo', {size: 10});
+      })
+      .then((response) => {
+        expect(response.results.length).toEqual(1);
+        expect(response.results[0].objectId.length).toEqual(10);
+        return rest.update(config, auth.nobody(config), 'Foo', {objectId: response.results[0].objectId}, {update: 20});
+      })
+      .then(() => {
+        return rest.find(config, auth.nobody(config), 'Foo', {size: 10});
+      }).then((response) => {
+        expect(response.results.length).toEqual(1);
+        expect(response.results[0].objectId.length).toEqual(10);
+        expect(response.results[0].update).toEqual(20);
+        return rest.create(config, auth.nobody(config), 'Foo', {size: 20});
+      })
+      .then(() => {
+        config.objectIdSize = 10;
+        return rest.find(config, auth.nobody(config), 'Foo', {size: 20});
+      })
+      .then((response) => {
+        expect(response.results.length).toEqual(1);
+        expect(response.results[0].objectId.length).toEqual(20);
+        done();
+      });
   });
 
   it('handles array, object, date', (done) => {
@@ -35,50 +81,56 @@ describe('rest create', () => {
       date: Parse._encode(now),
     };
     rest.create(config, auth.nobody(config), 'MyClass', obj)
-    .then(() => database.adapter.find('MyClass', { fields: {
-      array: { type: 'Array' },
-      object: { type: 'Object' },
-      date: { type: 'Date' },
-    } }, {}, {}))
-    .then(results => {
-      expect(results.length).toEqual(1);
-      var mob = results[0];
-      expect(mob.array instanceof Array).toBe(true);
-      expect(typeof mob.object).toBe('object');
-      expect(mob.date.__type).toBe('Date');
-      expect(new Date(mob.date.iso).getTime()).toBe(now.getTime());
-      done();
-    });
+      .then(() => database.adapter.find('MyClass', { fields: {
+        array: { type: 'Array' },
+        object: { type: 'Object' },
+        date: { type: 'Date' },
+      } }, {}, {}))
+      .then(results => {
+        expect(results.length).toEqual(1);
+        var mob = results[0];
+        expect(mob.array instanceof Array).toBe(true);
+        expect(typeof mob.object).toBe('object');
+        expect(mob.date.__type).toBe('Date');
+        expect(new Date(mob.date.iso).getTime()).toBe(now.getTime());
+        done();
+      });
   });
 
   it('handles object and subdocument', done => {
     const obj = { subdoc: {foo: 'bar', wu: 'tan'} };
-    rest.create(config, auth.nobody(config), 'MyClass', obj)
-    .then(() => database.adapter.find('MyClass', { fields: {} }, {}, {}))
-    .then(results => {
-      expect(results.length).toEqual(1);
-      const mob = results[0];
-      expect(typeof mob.subdoc).toBe('object');
-      expect(mob.subdoc.foo).toBe('bar');
-      expect(mob.subdoc.wu).toBe('tan');
-      expect(typeof mob.objectId).toEqual('string');
-      const obj = { 'subdoc.wu': 'clan' };
-      return rest.update(config, auth.nobody(config), 'MyClass', mob.objectId, obj)
-    })
-    .then(() => database.adapter.find('MyClass', { fields: {} }, {}, {}))
-    .then(results => {
-      expect(results.length).toEqual(1);
-      const mob = results[0];
-      expect(typeof mob.subdoc).toBe('object');
-      expect(mob.subdoc.foo).toBe('bar');
-      expect(mob.subdoc.wu).toBe('clan');
-      done();
-    })
-    .catch(error => {
-      console.log(error);
-      fail();
-      done();
+
+    Parse.Cloud.beforeSave('MyClass', function(req, res) {
+      // this beforeSave trigger should do nothing but can mess with the object
+      res.success();
     });
+
+    rest.create(config, auth.nobody(config), 'MyClass', obj)
+      .then(() => database.adapter.find('MyClass', { fields: {} }, {}, {}))
+      .then(results => {
+        expect(results.length).toEqual(1);
+        const mob = results[0];
+        expect(typeof mob.subdoc).toBe('object');
+        expect(mob.subdoc.foo).toBe('bar');
+        expect(mob.subdoc.wu).toBe('tan');
+        expect(typeof mob.objectId).toEqual('string');
+        const obj = { 'subdoc.wu': 'clan' };
+        return rest.update(config, auth.nobody(config), 'MyClass', { objectId: mob.objectId }, obj);
+      })
+      .then(() => database.adapter.find('MyClass', { fields: {} }, {}, {}))
+      .then(results => {
+        expect(results.length).toEqual(1);
+        const mob = results[0];
+        expect(typeof mob.subdoc).toBe('object');
+        expect(mob.subdoc.foo).toBe('bar');
+        expect(mob.subdoc.wu).toBe('clan');
+        done();
+      })
+      .catch(error => {
+        console.log(error);
+        fail();
+        done();
+      });
   });
 
   it('handles create on non-existent class when disabled client class creation', (done) => {
@@ -98,16 +150,16 @@ describe('rest create', () => {
   it('handles create on existent class when disabled client class creation', (done) => {
     var customConfig = Object.assign({}, config, {allowClientClassCreation: false});
     config.database.loadSchema()
-    .then(schema => schema.addClassIfNotExists('ClientClassCreation', {}))
-    .then(actualSchema => {
-      expect(actualSchema.className).toEqual('ClientClassCreation');
-      return rest.create(customConfig, auth.nobody(customConfig), 'ClientClassCreation', {});
-    })
-    .then(() => {
-      done();
-    }, () => {
-      fail('Should not throw error')
-    });
+      .then(schema => schema.addClassIfNotExists('ClientClassCreation', {}))
+      .then(actualSchema => {
+        expect(actualSchema.className).toEqual('ClientClassCreation');
+        return rest.create(customConfig, auth.nobody(customConfig), 'ClientClassCreation', {});
+      })
+      .then(() => {
+        done();
+      }, () => {
+        fail('Should not throw error')
+      });
   });
 
   it('handles user signup', (done) => {
@@ -194,7 +246,7 @@ describe('rest create', () => {
         objectId = r.response.objectId;
         return auth.getAuthForSessionToken({config, sessionToken: r.response.sessionToken })
       }).then((sessionAuth) => {
-        return rest.update(config, sessionAuth, '_User', objectId, updatedData);
+        return rest.update(config, sessionAuth, '_User', { objectId }, updatedData);
       }).then(() => {
         return Parse.User.logOut().then(() => {
           return Parse.User.logIn('hello', 'world');
@@ -254,7 +306,7 @@ describe('rest create', () => {
         expect(typeof r.response.updatedAt).toEqual('string');
         expect(r.response.objectId).toEqual(newUserSignedUpByFacebookObjectId);
         return rest.find(config, auth.master(config),
-                          '_Session', {sessionToken: r.response.sessionToken});
+          '_Session', {sessionToken: r.response.sessionToken});
       }).then((response) => {
         expect(response.results.length).toEqual(1);
         var output = response.results[0];
@@ -276,23 +328,23 @@ describe('rest create', () => {
       }
     };
     rest.create(config, auth.nobody(config), 'APointerDarkly', obj)
-    .then(() => database.adapter.find('APointerDarkly', { fields: {
-      foo: { type: 'String' },
-      aPointer: { type: 'Pointer', targetClass: 'JustThePointer' },
-    }}, {}, {}))
-    .then(results => {
-      expect(results.length).toEqual(1);
-      const output = results[0];
-      expect(typeof output.foo).toEqual('string');
-      expect(typeof output._p_aPointer).toEqual('undefined');
-      expect(output._p_aPointer).toBeUndefined();
-      expect(output.aPointer).toEqual({
-        __type: 'Pointer',
-        className: 'JustThePointer',
-        objectId: 'qwerty1234'
+      .then(() => database.adapter.find('APointerDarkly', { fields: {
+        foo: { type: 'String' },
+        aPointer: { type: 'Pointer', targetClass: 'JustThePointer' },
+      }}, {}, {}))
+      .then(results => {
+        expect(results.length).toEqual(1);
+        const output = results[0];
+        expect(typeof output.foo).toEqual('string');
+        expect(typeof output._p_aPointer).toEqual('undefined');
+        expect(output._p_aPointer).toBeUndefined();
+        expect(output.aPointer).toEqual({
+          __type: 'Pointer',
+          className: 'JustThePointer',
+          objectId: 'qwerty1234'
+        });
+        done();
       });
-      done();
-    });
   });
 
   it("cannot set objectId", (done) => {
@@ -331,7 +383,7 @@ describe('rest create', () => {
         expect(typeof r.response.createdAt).toEqual('string');
         expect(typeof r.response.sessionToken).toEqual('string');
         return rest.find(config, auth.master(config),
-                          '_Session', {sessionToken: r.response.sessionToken});
+          '_Session', {sessionToken: r.response.sessionToken});
       })
       .then((r) => {
         expect(r.results.length).toEqual(1);
@@ -367,7 +419,7 @@ describe('rest create', () => {
         expect(typeof r.response.createdAt).toEqual('string');
         expect(typeof r.response.sessionToken).toEqual('string');
         return rest.find(config, auth.master(config),
-                          '_Session', {sessionToken: r.response.sessionToken});
+          '_Session', {sessionToken: r.response.sessionToken});
       })
       .then((r) => {
         expect(r.results.length).toEqual(1);
@@ -419,6 +471,128 @@ describe('rest create', () => {
         done();
       })
   });
+
+  it("can create object in volatileClasses if masterKey", (done) =>{
+    rest.create(config, auth.master(config), '_PushStatus', {})
+      .then((r) => {
+        expect(r.response.objectId.length).toBe(10);
+      })
+      .then(() => {
+        rest.create(config, auth.master(config), '_JobStatus', {})
+          .then((r) => {
+            expect(r.response.objectId.length).toBe(10);
+            done();
+          })
+      })
+
+  });
+
+  it("cannot create object in volatileClasses if not masterKey", (done) =>{
+    Promise.resolve()
+      .then(() => {
+        rest.create(config, auth.nobody(config), '_PushStatus', {})
+      })
+      .then((r) => {
+        console.log(r);
+      })
+      .catch((error) => {
+        expect(error.code).toEqual(119);
+        done();
+      })
+  });
+
+  it ('locks down session', (done) => {
+    let currentUser;
+    Parse.User.signUp('foo', 'bar').then((user) => {
+      currentUser = user;
+      const sessionToken = user.getSessionToken();
+      var headers = {
+        'Content-Type': 'application/octet-stream',
+        'X-Parse-Application-Id': 'test',
+        'X-Parse-REST-API-Key': 'rest',
+        'X-Parse-Session-Token': sessionToken,
+      };
+      let sessionId;
+      return rp.get({
+        headers: headers,
+        url: 'http://localhost:8378/1/sessions/me',
+        json: true,
+      }).then(body => {
+        sessionId = body.objectId;
+        return rp.put({
+          headers,
+          url: 'http://localhost:8378/1/sessions/' + sessionId,
+          json: {
+            installationId: 'yolo'
+          }
+        })
+      }).then(done.fail, (res) => {
+        expect(res.statusCode).toBe(400);
+        expect(res.error.code).toBe(105);
+        return rp.put({
+          headers,
+          url: 'http://localhost:8378/1/sessions/' + sessionId,
+          json: {
+            sessionToken: 'yolo'
+          }
+        })
+      }).then(done.fail, (res) => {
+        expect(res.statusCode).toBe(400);
+        expect(res.error.code).toBe(105);
+        return Parse.User.signUp('other', 'user');
+      }).then((otherUser) => {
+        const user = new Parse.User();
+        user.id = otherUser.id;
+        return rp.put({
+          headers,
+          url: 'http://localhost:8378/1/sessions/' + sessionId,
+          json: {
+            user: Parse._encode(user)
+          }
+        })
+      }).then(done.fail, (res) => {
+        expect(res.statusCode).toBe(400);
+        expect(res.error.code).toBe(105);
+        const user = new Parse.User();
+        user.id = currentUser.id;
+        return rp.put({
+          headers,
+          url: 'http://localhost:8378/1/sessions/' + sessionId,
+          json: {
+            user: Parse._encode(user)
+          }
+        })
+      }).then(done).catch(done.fail);
+    }).catch(done.fail);
+  });
+
+  it ('sets current user in new sessions', (done) => {
+    let currentUser;
+    Parse.User.signUp('foo', 'bar')
+      .then((user) => {
+        currentUser = user;
+        const sessionToken = user.getSessionToken();
+        const headers = {
+          'X-Parse-Application-Id': 'test',
+          'X-Parse-REST-API-Key': 'rest',
+          'X-Parse-Session-Token': sessionToken,
+        };
+        return rp.post({
+          headers,
+          url: 'http://localhost:8378/1/sessions',
+          json: true,
+          body: { 'user': { '__type': 'Pointer', 'className':'_User', 'objectId': 'fakeId' } },
+        })
+      })
+      .then((body) => {
+        if (body.user.objectId === currentUser.id) {
+          return done();
+        } else {
+          return done.fail();
+        }
+      })
+      .catch(done.fail);
+  })
 });
 
 describe('rest update', () => {
@@ -434,7 +608,7 @@ describe('rest update', () => {
         createdAt: {__type: "Date", iso: newCreatedAt}, // should be ignored
       };
 
-      return rest.update(config, nobody, className, objectId, restObject).then(() => {
+      return rest.update(config, nobody, className, { objectId }, restObject).then(() => {
         const restWhere = {
           objectId: objectId,
         };

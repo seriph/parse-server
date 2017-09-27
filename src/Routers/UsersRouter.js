@@ -1,6 +1,5 @@
 // These methods handle the User-related routes.
 
-import deepcopy       from 'deepcopy';
 import Parse          from 'parse/node';
 import Config         from '../Config';
 import AccountLockout from '../AccountLockout';
@@ -12,32 +11,9 @@ import RestWrite      from '../RestWrite';
 const cryptoUtils = require('../cryptoUtils');
 
 export class UsersRouter extends ClassesRouter {
-  handleFind(req) {
-    req.params.className = '_User';
-    return super.handleFind(req);
-  }
 
-  handleGet(req) {
-    req.params.className = '_User';
-    return super.handleGet(req);
-  }
-
-  handleCreate(req) {
-    const data = deepcopy(req.body);
-    req.body = data;
-    req.params.className = '_User';
-
-    return super.handleCreate(req);
-  }
-
-  handleUpdate(req) {
-    req.params.className = '_User';
-    return super.handleUpdate(req);
-  }
-
-  handleDelete(req) {
-    req.params.className = '_User';
-    return super.handleDelete(req);
+  className() {
+    return '_User';
   }
 
   handleMe(req) {
@@ -57,6 +33,17 @@ export class UsersRouter extends ClassesRouter {
           const user = response.results[0].user;
           // Send token back on the login, because SDKs expect that.
           user.sessionToken = sessionToken;
+
+          // Remove hidden properties.
+          for (var key in user) {
+            if (user.hasOwnProperty(key)) {
+              // Regexp comes from Parse.Object.prototype.validate
+              if (key !== "__type" && !(/^[A-Za-z][0-9A-Za-z_]*$/).test(key)) {
+                delete user[key];
+              }
+            }
+          }
+
           return { response: user };
         }
       });
