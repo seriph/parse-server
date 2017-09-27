@@ -352,7 +352,7 @@ export class MongoStorageAdapter {
     }, {});
 
     readPreference = this._parseReadPreference(readPreference);
-    return this._adaptiveCollection(className))
+    return this._adaptiveCollection(className)
       .then(collection => collection.find(mongoWhere, {
         skip,
         limit,
